@@ -155,9 +155,9 @@ func startProbe(probeConfig *probeConfig) {
 
 	tlsconfig := NewTlsConfig(probeConfig)
 
-	publisherOptions := mqtt.NewClientOptions().SetClientID(fmt.Sprintf("%s-p", probeConfig.ClientPrefix)).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker)
+	publisherOptions := mqtt.NewClientOptions().SetClientID(probeConfig.ClientPrefix).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker)
 
-	subscriberOptions := mqtt.NewClientOptions().SetClientID(fmt.Sprintf("%s-s", probeConfig.ClientPrefix)).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker)
+	subscriberOptions := mqtt.NewClientOptions().SetClientID(probeConfig.ClientPrefix).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker)
 
 	subscriberOptions.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
 		queue <- [2]string{msg.Topic(), string(msg.Payload())}
