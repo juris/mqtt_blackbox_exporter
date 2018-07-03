@@ -9,6 +9,8 @@ RUN apk add --no-cache git upx \
     && goupx mqtt_blackbox_exporter
 
 FROM alpine:3.7
+
+RUN apk --no-cache add ca-certificates && update-ca-certificates
 COPY --from=0 /go/src/mqtt_blackbox_exporter/mqtt_blackbox_exporter /bin/mqtt_blackbox_exporter
 
 ENTRYPOINT ["/bin/mqtt_blackbox_exporter"]
