@@ -21,7 +21,8 @@ type config struct {
 
 type probeConfig struct {
 	Name         string        `yaml:"name"`
-	Broker       string        `yaml:"broker_url"`
+	Broker       string        `yaml:"broker_url_out"`
+	Broker_in	 string		   `yaml:"broker_url_in"`
 	Topic        string        `yaml:"topic"`
 	ClientPrefix string        `yaml:"client_prefix"`
 	Username     string        `yaml:"username"`
@@ -131,7 +132,7 @@ func NewTlsConfig(probeConfig *probeConfig) *tls.Config {
 func startProbe(probeConfig *probeConfig) {
 	num := probeConfig.Messages
 	testTimeout := 10 * time.Second
-	qos := byte(0)
+	qos := byte(1)
 	t0 := time.Now()
 
 	// Initialize optional metrics with initial values to have them present from the beginning
@@ -155,9 +156,9 @@ func startProbe(probeConfig *probeConfig) {
 
 	tlsconfig := NewTlsConfig(probeConfig)
 
-	publisherOptions := mqtt.NewClientOptions().SetClientID(probeConfig.ClientPrefix).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker)
+	publisherOptions := mqtt.NewClientOptions().SetClientID(fmt.Sprintf("%s_internal", probeConfig.ClientPrefix)).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker)
 
-	subscriberOptions := mqtt.NewClientOptions().SetClientID(probeConfig.ClientPrefix).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker)
+	subscriberOptions := mqtt.NewClientOptions().SetClientID(probeConfig.ClientPrefix).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker_in)
 
 	subscriberOptions.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
 		queue <- [2]string{msg.Topic(), string(msg.Payload())}
