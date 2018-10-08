@@ -5,14 +5,15 @@ import (
 	"crypto/x509"
 	"flag"
 	"fmt"
-	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/prometheus/client_golang/prometheus"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/prometheus/client_golang/prometheus"
+	"gopkg.in/yaml.v2"
 )
 
 type config struct {
@@ -22,7 +23,7 @@ type config struct {
 type probeConfig struct {
 	Name         string        `yaml:"name"`
 	Broker       string        `yaml:"broker_url_out"`
-	Broker_in	 string		   `yaml:"broker_url_in"`
+	Broker_in    string        `yaml:"broker_url_in"`
 	Topic        string        `yaml:"topic"`
 	ClientPrefix string        `yaml:"client_prefix"`
 	Username     string        `yaml:"username"`
@@ -40,6 +41,12 @@ var (
 	messagesPublished = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "probe_mqtt_messages_published_total",
+			Help: "Number of published messages.",
+		}, []string{"name", "broker"})
+
+	messagesPublishTimeout = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "probe_mqtt_messages_publish_timeout_total",
 			Help: "Number of published messages.",
 		}, []string{"name", "broker"})
 
@@ -83,6 +90,7 @@ var (
 
 	configFile    = flag.String("config.file", "config.yaml", "Exporter configuration file.")
 	listenAddress = flag.String("web.listen-address", ":9214", "The address to listen on for HTTP requests.")
+	enableTrace   = flag.Bool("trace.enable", false, "set this flag to enable mqtt tracing")
 )
 
 func init() {
@@ -91,7 +99,7 @@ func init() {
 	prometheus.MustRegister(probeCompleted)
 	prometheus.MustRegister(messagesPublished)
 	prometheus.MustRegister(messagesReceived)
-
+	prometheus.MustRegister(messagesPublishTimeout)
 	prometheus.MustRegister(timedoutTests)
 	prometheus.MustRegister(errors)
 }
@@ -129,9 +137,35 @@ func NewTlsConfig(probeConfig *probeConfig) *tls.Config {
 	}
 }
 
+func connectClient(probeConfig *probeConfig, timeout time.Duration, opts *mqtt.ClientOptions) (mqtt.Client, error) {
+	tlsconfig := NewTlsConfig(probeConfig)
+	baseOptions := mqtt.NewClientOptions()
+	if opts != nil {
+		baseOptions = opts
+	}
+	baseOptions = baseOptions.SetAutoReconnect(false).
+		SetUsername(probeConfig.Username).
+		SetPassword(probeConfig.Password).
+		SetTLSConfig(tlsconfig).
+		AddBroker(probeConfig.Broker)
+	client := mqtt.NewClient(baseOptions)
+	token := client.Connect()
+	success := token.WaitTimeout(timeout)
+	if !success {
+		return nil, fmt.Errorf("reached connect timeout")
+	}
+	if token.Error() != nil {
+		return nil, fmt.Errorf("failed to connect client: %s", token.Error().Error())
+	}
+	return client, nil
+
+}
+
 func startProbe(probeConfig *probeConfig) {
 	num := probeConfig.Messages
-	testTimeout := 10 * time.Second
+	setupTimeout := probeConfig.TestInterval / 3
+	probeTimeout := probeConfig.TestInterval / 3
+	setupDeadLine := time.Now().Add(setupTimeout)
 	qos := byte(1)
 	t0 := time.Now()
 
@@ -151,7 +185,7 @@ func startProbe(probeConfig *probeConfig) {
 	queue := make(chan [2]string)
 	reportError := func(error error) {
 		errors.WithLabelValues(probeConfig.Name, probeConfig.Broker).Inc()
-		logger.Print(error)
+		logger.Printf("Probe %s: %s", probeConfig.Name, error.Error())
 	}
 
 	tlsconfig := NewTlsConfig(probeConfig)
@@ -164,46 +198,48 @@ func startProbe(probeConfig *probeConfig) {
 		queue <- [2]string{msg.Topic(), string(msg.Payload())}
 	})
 
-	publisher := mqtt.NewClient(publisherOptions)
-	subscriber := mqtt.NewClient(subscriberOptions)
-
-	if token := publisher.Connect(); token.Wait() && token.Error() != nil {
-		reportError(token.Error())
+	publisher, err := connectClient(probeConfig, setupDeadLine.Sub(time.Now()), publisherOptions)
+	if err != nil {
+		reportError(err)
 		return
 	}
 	defer publisher.Disconnect(5)
 
-	if token := subscriber.Connect(); token.Wait() && token.Error() != nil {
-		reportError(token.Error())
+	subscriber, err := connectClient(probeConfig, setupDeadLine.Sub(time.Now()), subscriberOptions)
+	if err != nil {
+		reportError(err)
 		return
 	}
 	defer subscriber.Disconnect(5)
 
-	if token := subscriber.Subscribe(probeConfig.Topic, qos, nil); token.Wait() && token.Error() != nil {
+	if token := subscriber.Subscribe(probeConfig.Topic, qos, nil); token.WaitTimeout(setupDeadLine.Sub(time.Now())) && token.Error() != nil {
 		reportError(token.Error())
 		return
 	}
 	defer subscriber.Unsubscribe(probeConfig.Topic)
 
-	timeout := time.After(testTimeout)
-	timeoutTriggered := false
+	probeDeadline := time.Now().Add(probeTimeout)
+	timeout := time.After(probeTimeout)
 	receiveCount := 0
 
 	for i := 0; i < num; i++ {
 		text := fmt.Sprintf("this is msg #%d!", i)
 		token := publisher.Publish(probeConfig.Topic, qos, false, text)
-		token.Wait()
-		messagesPublished.WithLabelValues(probeConfig.Name, probeConfig.Broker).Inc()
+		if !token.WaitTimeout(probeDeadline.Sub(time.Now())) {
+			messagesPublishTimeout.WithLabelValues(probeConfig.Name, probeConfig.Broker).Inc()
+		} else {
+			messagesPublished.WithLabelValues(probeConfig.Name, probeConfig.Broker).Inc()
+		}
 	}
 
-	for receiveCount < num && !timeoutTriggered {
+	for receiveCount < num {
 		select {
 		case <-queue:
 			receiveCount++
 			messagesReceived.WithLabelValues(probeConfig.Name, probeConfig.Broker).Inc()
 		case <-timeout:
 			timedoutTests.WithLabelValues(probeConfig.Name, probeConfig.Broker).Inc()
-			timeoutTriggered = true
+			return
 		}
 	}
 }
@@ -214,6 +250,14 @@ func main() {
 
 	if err != nil {
 		logger.Fatalf("Error reading config file: %s", err)
+	}
+
+	mqtt.ERROR = logger
+	mqtt.CRITICAL = logger
+
+	if *enableTrace {
+		mqtt.WARN = logger
+		mqtt.DEBUG = logger
 	}
 
 	config := config{}

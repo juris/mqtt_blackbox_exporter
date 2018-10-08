@@ -1,4 +1,4 @@
-FROM golang:1.10-alpine3.8
+FROM golang:1.11.1-alpine3.8
 
 COPY . /go/src/mqtt_blackbox_exporter
 
