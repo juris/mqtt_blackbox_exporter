@@ -22,7 +22,7 @@ type config struct {
 
 type probeConfig struct {
 	Name               string        `yaml:"name"`
-	Broker             string        `yaml:"	url_out"`
+	Broker             string        `yaml:"broker_url_out"`
 	BrokerIn           string        `yaml:"broker_url_in"`
 	Topic              string        `yaml:"topic"`
 	ClientPrefix       string        `yaml:"client_prefix"`
