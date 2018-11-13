@@ -190,7 +190,7 @@ func startProbe(probeConfig *probeConfig) {
 
 	tlsconfig := NewTlsConfig(probeConfig)
 
-	publisherOptions := mqtt.NewClientOptions().SetClientID(fmt.Sprintf("%s_internal", probeConfig.ClientPrefix)).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker)
+	publisherOptions := mqtt.NewClientOptions().SetClientID(fmt.Sprintf("%s_0", probeConfig.ClientPrefix)).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker)
 
 	subscriberOptions := mqtt.NewClientOptions().SetClientID(probeConfig.ClientPrefix).SetUsername(probeConfig.Username).SetPassword(probeConfig.Password).SetTLSConfig(tlsconfig).AddBroker(probeConfig.Broker_in)
 
